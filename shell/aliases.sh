@@ -18,6 +18,16 @@ alias couch="ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 300
 
 mountt() { mount | column -t | sort; }
 
+# rclone.conf holds storage credentials, so it lives in pass (rclone/rclone.conf), not in this repo.
+# After editing it, rclone-conf-push; then rclone-conf-pull on the other machines.
+rclone-conf-push() { pass insert -m -f rclone/rclone.conf < "$HOME/.config/rclone/rclone.conf" && pass git push; }
+rclone-conf-pull() {
+  local f="$HOME/.config/rclone/rclone.conf"
+  # decrypt to a temp file first so a failed pull or decrypt can't clobber the working config
+  mkdir -p "${f%/*}" && pass git pull && (umask 077; pass show rclone/rclone.conf > "$f.new") &&
+    command mv -f "$f.new" "$f" || { command rm -f "$f.new"; return 1; }
+}
+
 # Distro-specific aliases and functions
 case ${OS_NAME} in
   darwin)

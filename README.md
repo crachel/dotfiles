@@ -18,6 +18,7 @@ files and leaves directories like `~/.config/zsh` as real directories other file
 
 ## Kept out of the repo
 
-- rclone config (it holds storage credentials):
-  `pass show rclone/rclone.conf > ~/.config/rclone/rclone.conf`
+- rclone config (it holds storage credentials) lives in `pass` as `rclone/rclone.conf`.
+  `rclone-conf-pull` (from `shell/aliases.sh`) writes it to `~/.config/rclone/rclone.conf`;
+  after editing it, `rclone-conf-push` stores it back.
 - Per-machine zsh startup: `~/.config/zsh/.zprofile` and `~/.config/zsh/.zlogin`.
