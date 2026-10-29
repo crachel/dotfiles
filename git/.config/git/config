@@ -1,0 +1,7 @@
+[user]
+	name = Craig Rachel
+	email = craig@craigrachel.com
+[core]
+	quotepath = false
+[pull]
+	ff = only

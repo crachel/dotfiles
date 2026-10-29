@@ -1,0 +1,5 @@
+# Set the theme to "Nord"
+--theme="Nord"
+
+# Only show Git modification markers (no line numbers, header or grid)
+--style="changes"

@@ -1,0 +1,4 @@
+theme = GitHub Dark
+
+# When ssh-ing from a Ghostty shell: install Ghostty's terminfo on the host, or fall back to xterm-256color.
+shell-integration-features = ssh-terminfo,ssh-env
