@@ -52,6 +52,23 @@
                     ]
                 }
             ]
+        },
+        {
+            "host": "mini",
+            "username": "crachel",
+            "args": [],
+            "projects": [
+                {
+                    "paths": [
+                        "/Users/crachel/Developer/src/github.com/quickscout/prod-data-api/./"
+                    ]
+                },
+                {
+                    "paths": [
+                        "/Users/crachel/Developer/src/gitlab.com/quickscout/strawn"
+                    ]
+                }
+            ]
         }
     ],
     "tab_size": 4,
