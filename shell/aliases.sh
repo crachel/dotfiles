@@ -10,6 +10,19 @@ alias rm="rm -iv"
 
 alias tree="tree -IC \".git*\""
 
+# eza (maintained fork of exa) when present, plain ls otherwise.
+# The fallbacks pick up the per-OS `ls` color alias defined below.
+if command -v eza >/dev/null 2>&1; then
+  alias l='eza --icons=auto --group-directories-first'
+  alias ll='eza -lh --icons=auto --group-directories-first --git'
+  alias la='eza -lha --icons=auto --group-directories-first --git'
+  alias lt='eza --tree --level=2 --icons=auto'
+else
+  alias l='ls -CF'
+  alias ll='ls -alF'
+  alias la='ls -A'
+fi
+
 alias ssh-keygen='ssh-keygen -C $(whoami)@$(hostname)-$(date +%Y-%m-%d)'
 
 # forward strawn (:3004 on the mini, over tailscale) to localhost:3004 here; no shell, ctrl-c to stop,
