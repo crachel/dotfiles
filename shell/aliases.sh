@@ -41,6 +41,18 @@ rclone-conf-pull() {
     command mv -f "$f.new" "$f" || { command rm -f "$f.new"; return 1; }
 }
 
+# `multipass launch` bridges by default on machines with local.bridged-network set. An explicit
+# --bridged or --network is left alone; `command multipass launch` skips this.
+multipass() {
+  if [ "$1" = launch ] && [ "$(command multipass get local.bridged-network)" != "<empty>" ]; then
+    case " $* " in
+      *" --bridged "* | *" --network"*) ;;
+      *) shift; set -- launch --bridged "$@" ;;
+    esac
+  fi
+  command multipass "$@"
+}
+
 # Distro-specific aliases and functions
 case ${OS_NAME} in
   darwin)
