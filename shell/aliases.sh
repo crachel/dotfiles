@@ -17,10 +17,13 @@ if command -v eza >/dev/null 2>&1; then
   alias ll='eza -lh --icons=auto --group-directories-first --git'
   alias la='eza -lha --icons=auto --group-directories-first --git'
   alias lt='eza --tree --level=2 --icons=auto'
+  # ls -Farlt: everything, newest last (eza's modified sort is already oldest-first)
+  alias lrt='eza -laF --sort=modified --icons=auto --git'
 else
   alias l='ls -CF'
   alias ll='ls -alF'
   alias la='ls -A'
+  alias lrt='ls -Farlt'
 fi
 
 alias ssh-keygen='ssh-keygen -C $(whoami)@$(hostname)-$(date +%Y-%m-%d)'
