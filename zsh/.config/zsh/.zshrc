@@ -13,7 +13,11 @@ precmd_vcs_info() { vcs_info }
 precmd_functions+=( precmd_vcs_info )
 setopt prompt_subst
 RPROMPT=\$vcs_info_msg_0_
-zstyle ':vcs_info:git:*' formats '%F{white}(%b)%r%f'
+zstyle ':vcs_info:*' check-for-changes true
+zstyle ':vcs_info:*' unstagedstr '*'
+zstyle ':vcs_info:*' stagedstr '+'
+zstyle ':vcs_info:git:*' formats '%F{white}(%b%u%c)%r%f'
+zstyle ':vcs_info:git:*' actionformats '%F{white}(%b|%a%u%c)%r%f'
 zstyle ':vcs_info:*' enable git
 
 HISTFILE=~/.config/zsh/.zsh_history
