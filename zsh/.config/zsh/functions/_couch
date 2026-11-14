@@ -1,0 +1,26 @@
+#compdef couch couch.sh
+# couch (~/.dotfiles/shell/couch.sh): its commands, and the flags logs takes. couch.sh is listed
+# because zsh expands the `couch` alias before completing.
+
+local -a commands
+commands=(
+  'status:print the tunnel and each service once'
+  'start:run in the background, now and at every login'
+  'stop:stop it, and stop starting it at login'
+  'restart:restart it, e.g. after editing couch.sh'
+  'reconnect:drop the ssh connection and dial again now'
+  'logs:recent events'
+  'run:run in the foreground instead'
+  'help:usage'
+)
+
+local state
+_arguments -C '1: :->command' '*:: :->args'
+case $state in
+  command) _describe -t commands 'couch command' commands ;;
+  args)
+    case $words[1] in
+      logs | log) _arguments '-f[keep following new events]' '-n+[how many events]:count' ;;
+    esac
+    ;;
+esac
