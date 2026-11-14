@@ -28,7 +28,8 @@ fi
 
 alias ssh-keygen='ssh-keygen -C $(whoami)@$(hostname)-$(date +%Y-%m-%d)'
 
-# forward strawn and its backends from the mini, reconnecting on its own; see couch.sh. `couch status` to check
+# forward strawn and its backends from the mini, kept up in the background by launchd; `couch` shows it
+# live, `couch help` lists the rest. See couch.sh.
 alias couch="$HOME/.dotfiles/shell/couch.sh"
 
 mountt() { mount | column -t | sort; }
