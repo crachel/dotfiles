@@ -11,6 +11,7 @@ commands=(
   'reconnect:drop the ssh connection and dial again now'
   'logs:recent events'
   'run:run in the foreground instead'
+  'awake:keep the Mac awake (8h, or e.g. 2h, 90m), or off'
   'help:usage'
 )
 
@@ -21,6 +22,7 @@ case $state in
   args)
     case $words[1] in
       logs | log) _arguments '-f[keep following new events]' '-n+[how many events]:count' ;;
+      awake | caffeinate) _arguments '1:how long:(off 1h 2h 4h 8h 12h)' ;;
     esac
     ;;
 esac

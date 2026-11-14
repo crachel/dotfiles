@@ -10,6 +10,7 @@
 #   couch reconnect    drop the ssh connection and dial again now, rather than wait out a dead one
 #   couch logs [-f]    what changed and when; -f keeps following
 #   couch run          run in the foreground instead, printing events; ctrl-c stops it (launchd runs this)
+#   couch awake [8h]   keep the Mac awake (caffeinate -dimsu) that long, apart from the tunnel; off ends it
 #
 # One `ssh -N` holds every forward and is redialed with backoff when it drops. Next to it, each service
 # is checked on the mini directly (curl over a separate ssh), so the answer doesn't depend on the
@@ -34,6 +35,8 @@ TUNNEL_FILE="$STATE_DIR/tunnel"
 HEALTH_FILE="$STATE_DIR/health"
 LOG="$STATE_DIR/events.log"
 SSH_ERR="$STATE_DIR/ssh.err"
+AWAKE_FILE="$STATE_DIR/awake"
+AWAKE_DEFAULT=${COUCH_AWAKE:-8h} # how long `couch awake` and the live view's a key keep the Mac up
 SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 
 # Runs on the mini, once per check: "<port> <curl exit code> <seconds>" per service. Any HTTP response
@@ -664,6 +667,86 @@ stop_all() { # → 0 if anything was running; also removes the agent, so login w
   return $was
 }
 
+# ---- keeping the Mac awake ---------------------------------------------------------------------
+
+# caffeinate -dimsu: the display, the idle timer and the disk stay awake, the Mac doesn't sleep on AC,
+# and you count as active, until -t runs out. It runs on its own, apart from the tunnel and launchd,
+# so stopping or restarting couch leaves it be. A subshell waits on it to log when its time is up;
+# $AWAKE_FILE holds "<caffeinate's pid> <when it ends>" while it runs.
+
+awake_pid() { # → AWAKE_PID and AWAKE_UNTIL of the caffeinate couch started; returns 1 if none is running
+  local pid="" until=0
+  AWAKE_PID="" AWAKE_UNTIL=0
+  [ -f "$AWAKE_FILE" ] && read -r pid until <"$AWAKE_FILE"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  case $(ps -o comm= -p "$pid") in *caffeinate) ;; *) return 1 ;; esac
+  AWAKE_PID=$pid AWAKE_UNTIL=$until
+}
+
+span_of() { # "8h", "90m", or "8" meaning hours → SPAN seconds; returns 1 for anything else
+  [[ $1 =~ ^([0-9]+)([hm]?)$ ]] || return 1
+  SPAN=$((10#${BASH_REMATCH[1]} * 60))
+  [ "${BASH_REMATCH[2]}" = m ] || SPAN=$((SPAN * 60))
+  [ "$SPAN" -gt 0 ]
+}
+
+until_text() { # var epoch → "18:30" today, otherwise "Sat 02:30"
+  if [ "$(date -r "$2" +%F)" = "$(date +%F)" ]; then
+    clock_of "$1" "$2"
+  else
+    printf -v "$1" '%s' "$(date -r "$2" '+%a %H:%M')"
+  fi
+}
+
+awake_on() { # span ("8h", "90m"): keep the Mac awake that long from now, replacing an earlier one
+  local until u d
+  span_of "$1" || { AWAKE_ERR="couch awake takes a time like 8h, 90m or 4 (hours), or off"; return 1; }
+  command -v caffeinate >/dev/null || { AWAKE_ERR="caffeinate is macOS's; there's none here"; return 1; }
+  mkdir -p "$STATE_DIR" || return 1
+  awake_off quiet
+  until=$(($(date +%s) + SPAN))
+  dur d "$SPAN"
+  # Ignoring HUP and INT, which caffeinate inherits, outlives the terminal it was started from.
+  (
+    trap '' HUP INT
+    trap - EXIT TERM WINCH
+    caffeinate -dimsu -t "$SPAN" &
+    pid=$!
+    echo "$pid $until" >"$AWAKE_FILE"
+    # only a run that ran its full time exits 0; awake_off kills it and logs that itself
+    if wait "$pid"; then
+      read -r k _ <"$AWAKE_FILE" 2>/dev/null && [ "$k" = "$pid" ] && rm -f "$AWAKE_FILE"
+      emit off "awake time's up after $d; the Mac can sleep again"
+    fi
+  ) </dev/null >/dev/null 2>&1 &
+  # wait (briefly) for the subshell to write down caffeinate's pid, so it shows straight away
+  for _ in 1 2 3 4 5 6 7 8 9 10; do awake_pid && break; sleep 0.05; done
+  until_text u "$until"
+  AWAKE_SAID="keeping the Mac awake until $u ($d)"
+  emit info "$AWAKE_SAID" >/dev/null
+  return 0
+}
+
+awake_off() { # [quiet]: end couch's caffeinate; returns 1 if none was running
+  awake_pid || return 1
+  rm -f "$AWAKE_FILE" # first, so the subshell waiting on it doesn't take this for its time running out
+  kill "$AWAKE_PID" 2>/dev/null
+  [ "${1:-}" = quiet ] || emit off "the Mac can sleep again, as asked" >/dev/null
+  return 0
+}
+
+cmd_awake() {
+  case ${1:-$AWAKE_DEFAULT} in
+    off | stop)
+      if awake_off; then echo "the Mac can sleep again"; else echo "wasn't keeping the Mac awake"; fi
+      ;;
+    *)
+      awake_on "${1:-$AWAKE_DEFAULT}" || { echo "couch: $AWAKE_ERR" >&2; exit 2; }
+      echo "$AWAKE_SAID; couch awake off lets it sleep"
+      ;;
+  esac
+}
+
 # ---- what you see ------------------------------------------------------------------------------
 
 # ROWS: the tunnel's line (and why it's down), one per service, and when they were checked.
@@ -710,6 +793,17 @@ build_rows() {
   if [ -n "$pid" ] && [ "$T_STATE" != up ] && [ -n "$T_REASON" ]; then
     fit d "$T_REASON" $(($3 - NAME_W - 4))
     ROWS+=("$indent$DIM$d$OFF")
+  fi
+  pad name awake "$NAME_W"
+  if awake_pid; then
+    glyph up
+    until_text d "$AWAKE_UNTIL"
+    text="until $d"
+    dur d $((AWAKE_UNTIL - now))
+    ROWS+=(" $GLYPH $BOLD$name$OFF$text$DIM · $d left$OFF")
+  elif [ "${4:-}" = always ]; then
+    glyph off
+    ROWS+=(" $GLYPH $BOLD$name$OFF${DIM}no, the Mac sleeps as usual$OFF")
   fi
   [ "${4:-}" = always ] && ROWS+=("")
 
@@ -940,7 +1034,7 @@ live_frame() {
     footer=" ${YELLOW}stop the tunnel?$OFF  ${BOLD}y$OFF$DIM stops it, any other key keeps it$OFF"
   else
     footer=" ${BOLD}r$OFF$DIM reconnect  $OFF${BOLD}c$OFF$DIM check now  $OFF${BOLD}s$OFF$DIM $verb  $OFF"
-    footer="$footer${BOLD}l$OFF$DIM log  $OFF${BOLD}q$OFF$DIM quit$OFF"
+    footer="$footer${BOLD}a$OFF$DIM awake  $OFF${BOLD}l$OFF$DIM log  $OFF${BOLD}q$OFF$DIM quit$OFF"
   fi
   for line in "${FRAME[@]}"; do out="$out$line"$'\e[K\n'; done
   printf '\e[H%s%s\e[K\e[J' "$out" "$footer"
@@ -1019,6 +1113,15 @@ cmd_live() {
           flash "$START_ERR" 60 "$YELLOW"
         fi
         ;;
+      a)
+        if awake_off; then
+          flash "the Mac can sleep again" 4
+        elif awake_on "$AWAKE_DEFAULT"; then
+          flash "$AWAKE_SAID; a again lets it sleep" 6
+        else
+          flash "$AWAKE_ERR" 10 "$YELLOW"
+        fi
+        ;;
       l) live_pager ;;
     esac
   done
@@ -1040,8 +1143,10 @@ usage: couch [command]
   reconnect         drop the ssh connection and dial again now
   logs [-f] [-n N]  recent events; -f keeps following
   run               run in the foreground instead, printing events; ctrl-c stops it
+  awake [time|off]  keep the Mac awake (caffeinate -dimsu) for $AWAKE_DEFAULT, or e.g. 2h or 90m;
+                    again starts the time over, off lets it sleep. Separate from the tunnel.
 
-keys in the live view: r reconnect, c check now, s start or stop, l full log, q quit
+keys in the live view: r reconnect, c check now, s start or stop, a awake or not, l full log, q quit
 state and log: ${STATE_DIR/#$HOME/$home}
 EOF
 }
@@ -1058,6 +1163,7 @@ case ${1:-} in
     cmd_logs "$@"
     ;;
   run) cmd_run ;;
+  awake | caffeinate) cmd_awake "${2:-}" ;;
   _up) tunnel_up ;;
   help | -h | --help) usage ;;
   *)
