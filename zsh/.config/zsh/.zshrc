@@ -34,6 +34,23 @@ setopt share_history
 # aliases
 [ -f "$HOME/.dotfiles/shell/aliases.sh" ] && source "$HOME/.dotfiles/shell/aliases.sh"
 
+# fd lists files for fzf: faster than find, skips .gitignored paths, includes dotfiles but not .git.
+# Debian/Ubuntu ship it as fdfind.
+if command -v fd >/dev/null || command -v fdfind >/dev/null; then
+  _fd=$(command -v fd || command -v fdfind)
+  export FZF_DEFAULT_COMMAND="$_fd --type f --hidden --follow --exclude .git"
+  export FZF_CTRL_T_COMMAND="$_fd --hidden --follow --exclude .git"
+  export FZF_ALT_C_COMMAND="$_fd --type d --hidden --follow --exclude .git"
+  # `vim **<Tab>` and `cd **<Tab>` completion
+  _fzf_compgen_path() { "$_fd" --hidden --follow --exclude .git . "$1"; }
+  _fzf_compgen_dir()  { "$_fd" --type d --hidden --follow --exclude .git . "$1"; }
+fi
+# previews: bat for files, an eza tree for directories
+if command -v bat >/dev/null && command -v eza >/dev/null; then
+  export FZF_CTRL_T_OPTS="--preview '[[ -d {} ]] && eza --tree --level=2 --color=always {} || bat --color=always --style=numbers --line-range=:300 {}'"
+  export FZF_ALT_C_OPTS="--preview 'eza --tree --level=2 --color=always --icons=auto {}'"
+fi
+
 # fzf: Ctrl-R history, Ctrl-T files, Alt-C cd (fzf 0.48+ prints its own zsh setup)
 command -v fzf >/dev/null && source <(fzf --zsh)
 
