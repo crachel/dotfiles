@@ -44,6 +44,13 @@ rclone-conf-pull() {
     command mv -f "$f.new" "$f" || { command rm -f "$f.new"; return 1; }
 }
 
+# Shell history syncs through our own atuin server on the mini. Its encryption key and the account
+# password live in pass (atuin/key, atuin/password); on a new machine, atuin-login signs in and pulls.
+atuin-login() {
+  pass git pull -q && atuin login -u crachel -p "$(pass show atuin/password)" -k "$(pass show atuin/key)" &&
+    atuin sync
+}
+
 # `multipass launch` bridges by default on machines with local.bridged-network set. An explicit
 # --bridged or --network is left alone; `command multipass launch` skips this.
 multipass() {

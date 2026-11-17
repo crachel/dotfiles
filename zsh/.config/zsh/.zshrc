@@ -54,6 +54,11 @@ fi
 # fzf: Ctrl-R history, Ctrl-T files, Alt-C cd (fzf 0.48+ prints its own zsh setup)
 command -v fzf >/dev/null && source <(fzf --zsh)
 
+# atuin: Ctrl-R searches history from every machine (synced through the mini; see atuin/ in dotfiles).
+# Loaded after fzf so it takes Ctrl-R; Up stays zsh's own. zsh still writes $HISTFILE too, so if atuin
+# breaks or is missing, history is intact and the line above leaves Ctrl-R with fzf.
+command -v atuin >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"
+
 # ~/.local/bin is also in .zshenv, but macOS's path_helper (/etc/zprofile) puts the system dirs ahead of it
 path=($HOME/.local/bin /opt/homebrew/opt/libpq/bin $path)
 

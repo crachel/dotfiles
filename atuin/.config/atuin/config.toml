@@ -1,0 +1,20 @@
+# Atuin syncs only with our own server on the mini, reached over Tailscale (plain http is fine:
+# Tailscale encrypts the link, and atuin encrypts history with its key before upload).
+# The key and password aren't in this repo; they live in pass. See atuin-login in shell/aliases.sh.
+sync_address = "http://mini:8888"
+auto_sync = true
+sync_frequency = "5m"
+# don't call home to api.atuin.sh for release checks; brew handles updates
+update_check = false
+
+# history search (Ctrl-R)
+search_mode = "fuzzy"
+filter_mode = "global"
+# in the search view, Ctrl-R cycles global → host → session → directory
+style = "compact"
+inline_height = 20
+enter_accept = false
+
+# never record commands that look like they carry secrets (atuin's built-in patterns cover
+# AWS/GitHub/Slack/Stripe tokens etc.); a leading space also skips recording, like hist_ignore_space
+secrets_filter = true
