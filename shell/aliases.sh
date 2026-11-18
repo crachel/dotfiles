@@ -10,6 +10,10 @@ alias rm="rm -iv"
 
 alias tree="tree -IC \".git*\""
 
+# gdu: interactive disk usage (arrows to browse, d deletes). Homebrew names it gdu-go so it doesn't
+# shadow coreutils' GNU du; Linux packages call it gdu.
+command -v gdu-go >/dev/null 2>&1 && alias gdu='gdu-go'
+
 # eza (maintained fork of exa) when present, plain ls otherwise.
 # The fallbacks pick up the per-OS `ls` color alias defined below.
 if command -v eza >/dev/null 2>&1; then

@@ -72,3 +72,7 @@ command -v pyenv >/dev/null && eval "$(pyenv init -)"
 if [[ -n $SSH_CONNECTION ]]; then
   zellij() { (( $# )) && command zellij "$@" || command zellij options --theme nord; }
 fi
+
+# zoxide: `z foo` jumps to the most-used directory matching foo, `zi` picks one with fzf.
+# Last, as zoxide asks, so its cd hook runs after everything else's.
+command -v zoxide >/dev/null && eval "$(zoxide init zsh)"
