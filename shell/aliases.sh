@@ -49,9 +49,12 @@ rclone-conf-pull() {
 }
 
 # Shell history syncs through our own atuin server on the mini. Its encryption key and the account
-# password live in pass (atuin/key, atuin/password); on a new machine, atuin-login signs in and pulls.
+# password live in pass (atuin/key, atuin/password). Run atuin-login once per new machine: it imports
+# this machine's zsh history, signs in, and syncs both ways. Lines zsh saved without a timestamp (before
+# extended_history) are stamped with the import time, so they sort as recent until newer commands pass them.
 atuin-login() {
-  pass git pull -q && atuin login -u crachel -p "$(pass show atuin/password)" -k "$(pass show atuin/key)" &&
+  HISTFILE=${HISTFILE:-$HOME/.config/zsh/.zsh_history} atuin import zsh &&
+    pass git pull -q && atuin login -u crachel -p "$(pass show atuin/password)" -k "$(pass show atuin/key)" &&
     atuin sync
 }
 

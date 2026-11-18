@@ -24,6 +24,8 @@ HISTFILE=~/.config/zsh/.zsh_history
 HISTSIZE=10000
 SAVEHIST=10000
 setopt append_history
+# record when each command ran (": <epoch>:<duration>;cmd"), so the history file can be merged by time
+setopt extended_history
 setopt hist_expire_dups_first
 setopt hist_ignore_all_dups
 setopt hist_ignore_space
