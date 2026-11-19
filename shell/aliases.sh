@@ -32,8 +32,8 @@ fi
 
 alias ssh-keygen='ssh-keygen -C $(whoami)@$(hostname)-$(date +%Y-%m-%d)'
 
-# forward strawn and its backends from the mini, kept up in the background by launchd; `couch` shows it
-# live, `couch help` lists the rest. See couch.sh.
+# forward strawn and its backends from the mini, and hold the SOCKS proxy on :1337 that leaves through aws,
+# both kept up in the background by launchd; `couch` shows it live, `couch help` lists the rest. See couch.sh.
 alias couch="$HOME/.dotfiles/shell/couch.sh"
 
 mountt() { mount | column -t | sort; }

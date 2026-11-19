@@ -1,6 +1,7 @@
 #!/bin/bash
 # couch: keep strawn (:3004 on the mini, over tailscale) and the backends its browser code calls
-# forwarded to the same ports here, across laptop sleep and wifi changes.
+# forwarded to the same ports here, across laptop sleep and wifi changes. Alongside, a SOCKS proxy on
+# localhost:1337 that leaves through the aws box, for sites that insist on seeing the same IP every time.
 #
 #   couch              live view of the tunnel, each service and recent events; starts it if needed
 #   couch status       print that once; exits 1 unless the tunnel is up
@@ -17,6 +18,9 @@
 # tunnel. Both keep small state files and an event log in $STATE_DIR for the live view and status to
 # read; the live view's keys signal the running copy (USR1 reconnects, USR2 checks now).
 #
+# The proxy is a second `ssh -N`, to $PROXY's host with -D, redialed the same way by the same running
+# copy. It starts, stops and reconnects with the tunnel, but each stays up or drops on its own.
+#
 # ssh's per-connection "channel N: open failed" lines are silenced (LogLevel=ERROR), because a browser
 # retrying one dead backend prints hundreds of them; events are logged only when something changes.
 set -u
@@ -24,6 +28,11 @@ set -u
 HOST=${COUCH_HOST:-mini}
 # name:port forwards the mini's port to the same one here; name:local:remote forwards it to another
 SERVICES=${COUCH_SERVICES:-strawn:3004 api:8000 rig:8080 flow:3002}
+# host:port for the SOCKS proxy (point the browser at SOCKS v5, localhost, that port); off for none
+PROXY=${COUCH_PROXY:-tailscale:1337}
+[ "$PROXY" = off ] && PROXY=""
+PROXY_HOST=${PROXY%:*}
+PROXY_PORT=${PROXY##*:}
 POLL_SECONDS=15
 MAX_BACKOFF=30
 AGENT=${COUCH_LABEL:-local.couch} # the launchd label
@@ -32,6 +41,8 @@ STATE_DIR=${COUCH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/couch}
 PLIST="$HOME/Library/LaunchAgents/$AGENT.plist"
 PIDFILE="$STATE_DIR/pid"
 TUNNEL_FILE="$STATE_DIR/tunnel"
+PROXY_FILE="$STATE_DIR/proxy" # the proxy's state, in the same form
+LINK=tunnel                   # which of the two this copy of tunnel_loop holds: tunnel or proxy
 HEALTH_FILE="$STATE_DIR/health"
 LOG="$STATE_DIR/events.log"
 SSH_ERR="$STATE_DIR/ssh.err"
@@ -62,7 +73,7 @@ done
 NAME_W=8 # the name column: the longest name ("tunnel" included) and two spaces
 for s in "${NAMES[@]}"; do [ $((${#s} + 2)) -gt "$NAME_W" ] && NAME_W=$((${#s} + 2)); done
 
-ssh_pid="" nap_pid="" watch_pid="" WANT_RECONNECT=0 CHECK_NOW=0
+ssh_pid="" nap_pid="" watch_pid="" proxy_pid="" WANT_RECONNECT=0 CHECK_NOW=0
 
 # ---- output ------------------------------------------------------------------------------------
 
@@ -171,10 +182,10 @@ save_tunnel() {
     >"$TUNNEL_FILE.$$" && mv -f "$TUNNEL_FILE.$$" "$TUNNEL_FILE"
 }
 
-load_tunnel() { # → T_*; returns 1 when nothing has run yet
+load_tunnel() { # [file, e.g. the proxy's] → T_*; returns 1 when nothing has run yet
+  local k v file=${1:-$TUNNEL_FILE}
   T_STATE=none T_SINCE=0 T_STARTED=0 T_MODE="" T_ATTEMPT=0 T_DOWN_SINCE=0 T_RETRY_AT=0 T_DROPS=0 T_REASON=""
-  [ -f "$TUNNEL_FILE" ] || return 1
-  local k v
+  [ -f "$file" ] || return 1
   while IFS='=' read -r k v; do
     case $k in
       state) T_STATE=$v ;;
@@ -187,7 +198,7 @@ load_tunnel() { # → T_*; returns 1 when nothing has run yet
       drops) T_DROPS=$v ;;
       reason) T_REASON=$v ;;
     esac
-  done <"$TUNNEL_FILE"
+  done <"$file"
 }
 
 load_health() { # → H_CHECKED, H_REACH (ok, lost or unknown) since H_REACH_SINCE, and per service H_KEY H_SINCE H_MS
@@ -370,11 +381,13 @@ ssh_reason() { # ssh's exit code → REASON: the first thing it said, or what th
 }
 
 tunnel_loop() {
-  local delay=1 started ran reason="" last="" taken now d lc
+  local delay=1 started ran reason="" last="" taken now d lc who=""
+  [ "$LINK" = tunnel ] || who="$LINK "
   # ssh runs this once its listeners are up; % would be one of its tokens
-  printf -v lc '%q _up' "$SELF"
+  printf -v lc '%q _up %s' "$SELF" "$LINK"
   lc=${lc//%/%%}
-  while :; do
+  # the proxy's copy has no one to stop it if the copy that started it is killed outright
+  while kill -0 "$SUPERVISOR" 2>/dev/null; do
     T_ATTEMPT=$((T_ATTEMPT + 1))
     UP_SINCE=0 ran=0
     taken=$(ports_taken)
@@ -405,11 +418,11 @@ tunnel_loop() {
     if [ "$UP_SINCE" -gt 0 ]; then
       T_DROPS=$((T_DROPS + 1)) T_ATTEMPT=0 T_DOWN_SINCE=$now
       dur d $((now - UP_SINCE))
-      emit down "tunnel dropped after $d: $reason"
+      emit down "$LINK dropped after $d: $reason"
       last=$reason
     elif [ "$reason" != "$last" ]; then
       # the same failure again and again is one event, not one per retry
-      if [ -n "$taken" ]; then emit warn "can't forward: $reason"; else emit warn "can't connect: $reason"; fi
+      if [ -n "$taken" ]; then emit warn "${who}can't forward: $reason"; else emit warn "${who}can't connect: $reason"; fi
       last=$reason
     fi
 
@@ -435,40 +448,55 @@ read_up() { # → UP_SINCE: when _up marked this connection up, or 0 if it never
   done <"$TUNNEL_FILE"
 }
 
-tunnel_up() { # ssh's LocalCommand: every forward is listening now
+tunnel_up() { # [proxy]: ssh's LocalCommand: every forward is listening now
   local now d
+  [ "${1:-}" = proxy ] && LINK=proxy TUNNEL_FILE=$PROXY_FILE
   load_tunnel || return 0
   now=$(date +%s)
   if [ "$T_ATTEMPT" -gt 1 ]; then
     dur d $((now - T_DOWN_SINCE))
-    emit up "tunnel up, after $d and $T_ATTEMPT tries"
+    emit up "$LINK up, after $d and $T_ATTEMPT tries"
   else
-    emit up "tunnel up"
+    emit up "$LINK up"
   fi
   T_STATE=up T_SINCE=$now T_REASON="" T_RETRY_AT=0
   save_tunnel
 }
 
-on_reconnect() {
+redial() { # drop the connection, or the wait before the next try, and dial again now
   WANT_RECONNECT=1
-  emit info "reconnecting, as asked"
   [ -n "$ssh_pid" ] && kill "$ssh_pid" 2>/dev/null
   [ -n "$nap_pid" ] && kill "$nap_pid" 2>/dev/null
+}
+
+on_reconnect() {
+  emit info "reconnecting, as asked"
+  redial
+  [ -n "$proxy_pid" ] && kill -USR1 "$proxy_pid" 2>/dev/null
+}
+
+# The proxy: tunnel_loop again, in a subshell where the proxy's host, port and files stand in for the
+# tunnel's. -C because what crosses it is web pages.
+proxy_loop() {
+  trap redial USR1
+  LINK=proxy HOST=$PROXY_HOST TUNNEL_FILE=$PROXY_FILE SSH_ERR="$STATE_DIR/proxy.err"
+  LPORTS=("$PROXY_PORT") FORWARDS=(-C -D "$PROXY_PORT")
+  tunnel_loop
 }
 
 on_check() { [ -n "$watch_pid" ] && kill -USR1 "$watch_pid" 2>/dev/null; }
 
 cleanup() { # exit code: 0 when told to stop, otherwise that of the error that ended the script
-  local rc=$1 kids i=0 see="the message above"
+  local rc=$1 kids p i=0 see="the message above"
   # launchd and `couch stop` can both send TERM; a second one mustn't cut this short
   trap '' INT TERM HUP USR1 USR2
   trap - EXIT
-  if [ -n "$watch_pid" ]; then
-    kids=$(pgrep -P "$watch_pid")
-    kill "$watch_pid" 2>/dev/null
+  for p in $watch_pid $proxy_pid; do # and what each is waiting on: a check, a nap, the proxy's ssh
+    kids=$(pgrep -P "$p")
+    kill "$p" 2>/dev/null
     # shellcheck disable=SC2086  # one pid per word
     [ -n "$kids" ] && kill $kids 2>/dev/null
-  fi
+  done
   [ -n "$nap_pid" ] && kill "$nap_pid" 2>/dev/null
   if [ -n "$ssh_pid" ]; then
     kill "$ssh_pid" 2>/dev/null
@@ -520,15 +548,21 @@ cmd_run() {
   T_STARTED=$(date +%s)
   T_STATE=connecting T_SINCE=$T_STARTED T_DOWN_SINCE=$T_STARTED T_ATTEMPT=0 T_RETRY_AT=0 T_DROPS=0 T_REASON=""
   save_tunnel
+  local socks=${PROXY:+, socks proxy on :$PROXY_PORT through $PROXY_HOST}
   if [ "$T_MODE" = launchd ]; then
-    emit info "started in the background, forwarding $(port_list) from $HOST"
+    emit info "started in the background, forwarding $(port_list) from $HOST$socks"
   else
-    emit info "started, forwarding $(port_list) from $HOST; ctrl-c stops it"
+    emit info "started, forwarding $(port_list) from $HOST$socks; ctrl-c stops it"
   fi
 
   watch_health &
   watch_pid=$!
   disown "$watch_pid"
+  if [ -n "$PROXY" ]; then
+    proxy_loop &
+    proxy_pid=$!
+    disown "$proxy_pid"
+  fi
   tunnel_loop
 }
 
@@ -565,7 +599,7 @@ xml() {
 write_plist() {
   local v env=""
   # launchd doesn't read shell startup files, so carry over any overrides set here
-  for v in COUCH_HOST COUCH_SERVICES COUCH_LABEL; do
+  for v in COUCH_HOST COUCH_SERVICES COUCH_PROXY COUCH_LABEL; do
     [ -n "${!v:-}" ] && env="$env
 		<key>$v</key>
 		<string>$(xml "${!v}")</string>"
@@ -749,14 +783,8 @@ cmd_awake() {
 
 # ---- what you see ------------------------------------------------------------------------------
 
-# ROWS: the tunnel's line (and why it's down), one per service, and when they were checked.
-#   $1 now, $2 the running copy's pid or "", $3 width for the long bits,
-#   $4 "always" shows the checked line even when everything's fine (the live view)
-build_rows() {
-  local now=$1 pid=$2 i d text note="" name port label lc="" age fresh=1 stale=0 indent
-  ROWS=()
-  printf -v indent '%*s' $((NAME_W + 3)) ""
-
+link_row() { # name host note now pid width → ROWS: the tunnel's line or the proxy's, from T_*, and why it's down
+  local name host=$2 note=$3 now=$4 pid=$5 d text indent
   if [ -z "$pid" ]; then
     glyph off
     text="not running"
@@ -773,26 +801,50 @@ build_rows() {
         text="down for $d, retrying"
         [ "$T_RETRY_AT" -gt "$now" ] && text="$text in $((T_RETRY_AT - now))s"
         ;;
+      none) # the running copy has never held this one: it predates the proxy, or was started without it
+        glyph off
+        text="not started; couch restart starts it"
+        ;;
       *)
         glyph wait
-        text="connecting to $HOST"
+        text="connecting to $host"
         if [ "$T_ATTEMPT" -gt 1 ]; then
           dur d $((now - T_DOWN_SINCE))
           text="$text, down for $d"
         fi
         ;;
     esac
-    if [ "$T_MODE" = launchd ]; then note="in the background"; else note="in the foreground, pid $pid"; fi
     if [ "$T_DROPS" -gt 0 ]; then
       clock_of d "$T_STARTED"
-      note="$note, dropped ${T_DROPS}× since $d"
+      note="$note${note:+, }dropped ${T_DROPS}× since $d"
     fi
   fi
-  pad name tunnel "$NAME_W"
+  pad name "$1" "$NAME_W"
   ROWS+=(" $GLYPH $BOLD$name$OFF$text${note:+$DIM · $note$OFF}")
   if [ -n "$pid" ] && [ "$T_STATE" != up ] && [ -n "$T_REASON" ]; then
-    fit d "$T_REASON" $(($3 - NAME_W - 4))
+    printf -v indent '%*s' $((NAME_W + 3)) ""
+    fit d "$T_REASON" $(($6 - NAME_W - 4))
     ROWS+=("$indent$DIM$d$OFF")
+  fi
+}
+
+# ROWS: the tunnel's line and the proxy's (and why they're down), one per service, and when they were
+# checked. Leaves T_* the tunnel's.
+#   $1 now, $2 the running copy's pid or "", $3 width for the long bits,
+#   $4 "always" shows the checked line even when everything's fine (the live view)
+build_rows() {
+  local now=$1 pid=$2 i d text note="" name port label lc="" age fresh=1 stale=0 indent
+  ROWS=()
+  printf -v indent '%*s' $((NAME_W + 3)) ""
+
+  if [ -n "$pid" ]; then
+    if [ "$T_MODE" = launchd ]; then note="in the background"; else note="in the foreground, pid $pid"; fi
+  fi
+  link_row tunnel "$HOST" "$note" "$now" "$pid" "$3"
+  if [ -n "$PROXY" ]; then
+    load_tunnel "$PROXY_FILE"
+    link_row proxy "$PROXY_HOST" "socks :$PROXY_PORT through $PROXY_HOST" "$now" "$pid" "$3"
+    load_tunnel
   fi
   pad name awake "$NAME_W"
   if awake_pid; then
@@ -1132,7 +1184,8 @@ usage() {
   for i in "${!NAMES[@]}"; do list="$list${list:+, }${NAMES[i]} :${LPORTS[i]}"; done
   cat <<EOF
 couch keeps $HOST's dev services forwarded here over ssh: $list
-
+${PROXY:+and a SOCKS v5 proxy on localhost:$PROXY_PORT that leaves through $PROXY_HOST, for sites that want one IP
+}
 usage: couch [command]
 
   (none)            live view; starts the tunnel in the background if it isn't running
@@ -1148,6 +1201,7 @@ usage: couch [command]
 
 keys in the live view: r reconnect, c check now, s start or stop, a awake or not, l full log, q quit
 state and log: ${STATE_DIR/#$HOME/$home}
+COUCH_PROXY=host:port moves the proxy, COUCH_PROXY=off drops it (set it before couch start or restart)
 EOF
 }
 
@@ -1164,7 +1218,7 @@ case ${1:-} in
     ;;
   run) cmd_run ;;
   awake | caffeinate) cmd_awake "${2:-}" ;;
-  _up) tunnel_up ;;
+  _up) tunnel_up "${2:-}" ;;
   help | -h | --help) usage ;;
   *)
     usage >&2
