@@ -8,7 +8,7 @@ Each top-level directory is a [GNU Stow](https://www.gnu.org/software/stow/) pac
 ```sh
 git clone https://github.com/crachel/dotfiles.git ~/.dotfiles
 cd ~/.dotfiles
-stow atuin aws bat btop ghostty git gpg tmux yt-dlp zed zellij zsh
+stow atuin aws bat btop emacs ghostty git gpg tmux yt-dlp zed zellij zsh
 ```
 
 Stow only the packages for tools you have. `.stowrc` passes `--no-folding`, so stow links individual

@@ -30,6 +30,10 @@ else
   alias lrt='ls -Farlt'
 fi
 
+# a scratch buffer in the terminal; the first call starts the emacs daemon, later ones attach in an instant
+# and find the buffer as it was left. It lives only as long as the daemon (lost on reboot).
+alias scratch='emacsclient -t -a "" -e "(switch-to-buffer \"*scratch*\")"'
+
 alias ssh-keygen='ssh-keygen -C $(whoami)@$(hostname)-$(date +%Y-%m-%d)'
 
 # forward strawn and its backends from the mini, and hold the SOCKS proxy on :1337 that leaves through aws,
