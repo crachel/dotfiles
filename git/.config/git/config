@@ -5,6 +5,12 @@
 	quotepath = false
 [pull]
 	ff = only
+[credential "https://github.com"]
+	helper = 
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/opt/homebrew/bin/gh auth git-credential
 # delta pages diffs, log -p and show with syntax highlighting (Nord, matching bat); falls back to
 # less/cat on machines without it. n/N jump between files.
 [core]
